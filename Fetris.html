@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Ferret Tetris (Ferret-Shaped Pieces)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body{
+      margin:0;min-height:100vh;display:grid;place-items:center;
+      background:radial-gradient(1200px 800px at 30% 20%, #2a1f2e, #0b0b12 60%, #050508);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#eaeaf3;
+    }
+    .wrap{
+      display:grid;gap:14px;grid-template-columns:auto 280px;align-items:start;
+      padding:18px;background:rgba(10,10,18,0.55);
+      border:1px solid rgba(255,255,255,0.10);border-radius:18px;
+      box-shadow:0 12px 40px rgba(0,0,0,0.45);backdrop-filter:blur(6px);
+    }
+    canvas{
+      border-radius:14px;background:linear-gradient(#07070c,#05050a);
+      border:1px solid rgba(255,255,255,0.12);box-shadow:0 10px 30px rgba(0,0,0,0.55);
+    }
+    .panel{
+      display:grid;gap:10px;padding:12px;border-radius:14px;
+      border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.04);
+    }
+    .title{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .title h1{margin:0;font-size:18px;letter-spacing:0.3px}
+    .pill{
+      padding:4px 10px;border-radius:999px;font-size:12px;opacity:0.9;
+      border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);
+    }
+    .stats{display:grid;gap:8px}
+    .row{display:flex;justify-content:space-between;gap:10px}
+    .kbd{
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+      font-size:12px;padding:2px 6px;border-radius:8px;
+      border:1px solid rgba(255,255,255,0.14);background:rgba(0,0,0,0.35);
+    }
+    .controls{font-size:13px;line-height:1.5;opacity:0.95}
+    .btnrow{display:flex;gap:10px}
+    button{
+      flex:1;cursor:pointer;border:1px solid rgba(255,255,255,0.16);
+      background:rgba(255,255,255,0.06);color:inherit;
+      padding:10px 12px;border-radius:12px;font-weight:700;
+    }
+    button:hover{background:rgba(255,255,255,0.10)}
+    .small{font-size:12px;opacity:0.8}
+    .label{
+      font-size:12px;opacity:0.9;display:flex;justify-content:space-between;gap:10px;
+      border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.25);
+      padding:8px 10px;border-radius:12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="game" width="360" height="720" aria-label="Ferret Tetris canvas"></canvas>
+
+    <div class="panel">
+      <div class="title">
+        <h1>Ferret Tetris</h1>
+        <span class="pill" id="statePill">READY</span>
+      </div>
+
+      <canvas id="next" width="240" height="210" aria-label="Next & Hold preview"></canvas>
+
+      <div class="label"><span>Current ferret</span><strong id="currentCoat">—</strong></div>
+      <div class="label"><span>Hold ferret</span><strong id="holdCoat">—</strong></div>
+
+      <div class="stats">
+        <div class="row"><span>Score</span><strong id="score">0</strong></div>
+        <div class="row"><span>Lines</span><strong id="lines">0</strong></div>
+        <div class="row"><span>Level</span><strong id="level">1</strong></div>
+        <div class="row"><span>Best</span><strong id="best">0</strong></div>
+      </div>
+
+      <div class="btnrow">
+        <button id="btnToggle">Start / Pause</button>
+        <button id="btnSound">Sound: ON</button>
+      </div>
+
+      <div class="controls">
+        <div><span class="kbd">←</span> <span class="kbd">→</span> move</div>
+        <div><span class="kbd">↓</span> soft drop</div>
+        <div><span class="kbd">Space</span> hard drop</div>
+        <div><span class="kbd">↑</span> rotate</div>
+        <div><span class="kbd">C</span> hold</div>
+        <div><span class="kbd">P</span> pause</div>
+      </div>
+
+      <div class="small">Each tetromino is drawn as a single bendy ferret 🦦</div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const nextCanvas = document.getElementById("next");
+  const nctx = nextCanvas.getContext("2d");
+
+  const scoreEl = document.getElementById("score");
+  const linesEl = document.getElementById("lines");
+  const levelEl = document.getElementById("level");
+  const bestEl = document.getElementById("best");
+  const statePill = document.getElementById("statePill");
+  const btnToggle = document.getElementById("btnToggle");
+  const btnSound = document.getElementById("btnSound");
+  const currentCoatEl = document.getElementById("currentCoat");
+  const holdCoatEl = document.getElementById("holdCoat");
+
+  const COLS = 10, ROWS = 20;
+  const BLOCK = Math.floor(canvas.width / COLS);
+  const TOP_OFFSET = Math.floor((canvas.height - ROWS * BLOCK) / 2);
+
+  // Ferret coat colors per piece type
+  const FERRET = {
+    I: { fill: "#9fd6ff", edge: "#5aa9ff", name: "Silver Ferret",   body:"#dbe9f6", belly:"#ffffff", mask:false },
+    O: { fill: "#ffe8a6", edge: "#ffbf3a", name: "Champagne Ferret",body:"#f2d28b", belly:"#fff3d6", mask:false },
+    T: { fill: "#d8b4ff", edge: "#9b6bff", name: "Lilac Ferret",    body:"#bba3d6", belly:"#eee6f7", mask:false },
+    S: { fill: "#b7ffcf", edge: "#38d98c", name: "Mint Ferret",     body:"#9fd9b8", belly:"#e7f7ee", mask:false },
+    Z: { fill: "#ffb4c8", edge: "#ff4f87", name: "Cinnamon Ferret", body:"#c77a5a", belly:"#f3d6c9", mask:false },
+    J: { fill: "#c8c0b8", edge: "#8a8177", name: "Sable Ferret",    body:"#8b7a6b", belly:"#d8cfc7", mask:true  },
+    L: { fill: "#c79a7a", edge: "#7a4c2f", name: "Chocolate Ferret",body:"#6e4a2f", belly:"#caa17c", mask:true  }
+  };
+
+  // Standard tetromino matrices (rotation is handled by rotateMatrix)
+  const SHAPES = {
+    I: [
+      [0,0,0,0],
+      [1,1,1,1],
+      [0,0,0,0],
+      [0,0,0,0]
+    ],
+    O: [
+      [1,1],
+      [1,1]
+    ],
+    T: [
+      [0,1,0],
+      [1,1,1],
+      [0,0,0]
+    ],
+    S: [
+      [0,1,1],
+      [1,1,0],
+      [0,0,0]
+    ],
+    Z: [
+      [1,1,0],
+      [0,1,1],
+      [0,0,0]
+    ],
+    J: [
+      [1,0,0],
+      [1,1,1],
+      [0,0,0]
+    ],
+    L: [
+      [0,0,1],
+      [1,1,1],
+      [0,0,0]
+    ],
+  };
+
+  // For each type + rotation, define a "ferret spine path" through the 4 cells.
+  // Order is HEAD -> ... -> TAIL. This makes the whole piece look like ONE ferret.
+  const PATHS = {
+    // I: a straight ferret
+    I: {
+      0: [[3,1],[2,1],[1,1],[0,1]], // head right, tail left
+      1: [[1,3],[1,2],[1,1],[1,0]], // head bottom, tail top
+      2: [[0,1],[1,1],[2,1],[3,1]], // head left, tail right
+      3: [[1,0],[1,1],[1,2],[1,3]], // head top, tail bottom
+    },
+    // O: a curled-up ferret (still 4 cells)
+    O: {
+      0: [[1,0],[0,0],[0,1],[1,1]],
+      1: [[1,0],[0,0],[0,1],[1,1]],
+      2: [[1,0],[0,0],[0,1],[1,1]],
+      3: [[1,0],[0,0],[0,1],[1,1]],
+    },
+    // T: head on one arm, tail on stem
+    T: {
+      0: [[0,1],[1,1],[2,1],[1,0]],
+      1: [[1,0],[1,1],[1,2],[2,1]],
+      2: [[2,1],[1,1],[0,1],[1,2]],
+      3: [[1,2],[1,1],[1,0],[0,1]],
+    },
+    // S: zig-zag ferret
+    S: {
+      0: [[2,0],[1,0],[1,1],[0,1]],
+      1: [[1,2],[1,1],[2,1],[2,0]],
+      2: [[0,1],[1,1],[1,0],[2,0]],
+      3: [[2,0],[2,1],[1,1],[1,2]],
+    },
+    // Z: zig-zag opposite
+    Z: {
+      0: [[0,0],[1,0],[1,1],[2,1]],
+      1: [[2,2],[2,1],[1,1],[1,0]],
+      2: [[2,1],[1,1],[1,0],[0,0]],
+      3: [[1,0],[1,1],[2,1],[2,2]],
+    },
+    // J: hooky ferret (head on long end)
+    J: {
+      0: [[2,1],[1,1],[0,1],[0,0]],
+      1: [[1,2],[1,1],[1,0],[2,0]],
+      2: [[0,1],[1,1],[2,1],[2,2]],
+      3: [[1,0],[1,1],[1,2],[0,2]],
+    },
+    // L: hooky ferret opposite
+    L: {
+      0: [[0,1],[1,1],[2,1],[2,0]],
+      1: [[1,0],[1,1],[1,2],[2,2]],
+      2: [[2,1],[1,1],[0,1],[0,2]],
+      3: [[1,2],[1,1],[1,0],[0,0]],
+    },
+  };
+
+  // --- Sound (cute squeaks) ---
+  let soundOn = true;
+  let audioCtx = null;
+
+  function ensureAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+
+  function squeak(type="move") {
+    if (!soundOn) return;
+    ensureAudio();
+    const t0 = audioCtx.currentTime;
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    const profiles = {
+      move:      { f1: 900,  f2: 650,  dur: 0.05, vol: 0.08 },
+      rotate:    { f1: 1200, f2: 780,  dur: 0.06, vol: 0.09 },
+      drop:      { f1: 600,  f2: 320,  dur: 0.08, vol: 0.10 },
+      line:      { f1: 1400, f2: 900,  dur: 0.12, vol: 0.12 },
+      gameover:  { f1: 500,  f2: 160,  dur: 0.35, vol: 0.12 },
+      hold:      { f1: 1000, f2: 500,  dur: 0.10, vol: 0.10 },
+      start:     { f1: 900,  f2: 1300, dur: 0.12, vol: 0.10 },
+      pause:     { f1: 700,  f2: 450,  dur: 0.10, vol: 0.08 },
+    }[type] || { f1: 900, f2: 650, dur: 0.05, vol: 0.08 };
+
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(profiles.f1, t0);
+    osc.frequency.exponentialRampToValueAtTime(profiles.f2, t0 + profiles.dur);
+
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(profiles.vol, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + profiles.dur);
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.start(t0);
+    osc.stop(t0 + profiles.dur + 0.02);
+  }
+
+  btnSound.addEventListener("click", () => {
+    soundOn = !soundOn;
+    btnSound.textContent = soundOn ? "Sound: ON" : "Sound: OFF";
+    if (soundOn) squeak("move");
+  });
+
+  // --- Game state ---
+  const board = Array.from({ length: ROWS }, () => Array(COLS).fill(null)); // each cell: null or {type, part, links}
+  let rngBag = [];
+  let current = null;
+  let next = null;
+  let hold = null;
+  let holdUsed = false;
+
+  let score = 0, lines = 0, level = 1;
+  let best = Number(localStorage.getItem("ferret_tetris_best") || 0);
+  bestEl.textContent = String(best);
+
+  let running = false;
+  let paused = false;
+  let lastTime = 0;
+  let dropCounter = 0;
+
+  function setPill(text){ statePill.textContent = text; }
+  function cloneMatrix(m){ return m.map(r => r.slice()); }
+
+  function rotateMatrix(mat, dir){
+    const N = mat.length;
+    const out = Array.from({ length: N }, () => Array(N).fill(0));
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++){
+      if (dir > 0) out[x][N - 1 - y] = mat[y][x];
+      else out[N - 1 - x][y] = mat[y][x];
+    }
+    return out;
+  }
+
+  function getDropInterval(){
+    const base = 900;
+    const speedup = (level - 1) * 70;
+    return Math.max(120, base - speedup);
+  }
+
+  function bagNextType(){
+    if (rngBag.length === 0){
+      rngBag = ["I","O","T","S","Z","J","L"];
+      for (let i = rngBag.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [rngBag[i], rngBag[j]] = [rngBag[j], rngBag[i]];
+      }
+    }
+    return rngBag.pop();
+  }
+
+  function normalizeTo4(type, m){
+    // ensure 4x4 for consistent path coords
+    const N = 4;
+    const out = Array.from({length:N}, ()=>Array(N).fill(0));
+    for (let y=0;y<m.length;y++){
+      for (let x=0;x<m[y].length;x++){
+        if (m[y][x]) out[y][x] = 1;
+      }
+    }
+    // For O piece (2x2), keep it at top-left; PATHS uses 2x2 coords anyway but inside 4 works too.
+    return out;
+  }
+
+  function spawnPiece(type){
+    const base = cloneMatrix(SHAPES[type]);
+    const size = Math.max(base.length, base[0].length);
+    const sq = Array.from({ length: size }, (_, y) =>
+      Array.from({ length: size }, (_, x) => (base[y]?.[x] ? 1 : 0))
+    );
+    return { type, matrix: sq, x: Math.floor((COLS - sq.length)/2), y: -1, rot: 0 };
+  }
+
+  function collides(piece, ox=0, oy=0, testMatrix=piece.matrix){
+    for (let y = 0; y < testMatrix.length; y++){
+      for (let x = 0; x < testMatrix[y].length; x++){
+        if (!testMatrix[y][x]) continue;
+        const bx = piece.x + x + ox;
+        const by = piece.y + y + oy;
+        if (bx < 0 || bx >= COLS || by >= ROWS) return true;
+        if (by >= 0 && board[by][bx]) return true;
+      }
+    }
+    return false;
+  }
+
+  function computeFerretParts(piece){
+    // produce a map local (y,x) -> {part, links:{l,r,u,d}}
+    const type = piece.type;
+    const rot = (piece.rot ?? 0) & 3;
+    const mat4 = normalizeTo4(type, piece.matrix);
+
+    // Build set of occupied coords in 4x4 space
+    const occ = new Set();
+    for (let y=0;y<4;y++) for (let x=0;x<4;x++) if (mat4[y][x]) occ.add(`${x},${y}`);
+
+    // Path positions might include coords that are not in the current matrix space (rare if matrix is 3x3 but path defined in 3x3)
+    // We'll use PATHS[type][rot] and only keep those that exist.
+    const path = (PATHS[type]?.[rot] || []).filter(([x,y]) => occ.has(`${x},${y}`));
+
+    // If somehow path doesn't match (shouldn't), fall back to any 4 cells in reading order.
+    let ordered = path;
+    if (ordered.length !== 4){
+      ordered = [];
+      for (let y=0;y<4;y++) for (let x=0;x<4;x++) if (mat4[y][x]) ordered.push([x,y]);
+    }
+
+    const idx = new Map(ordered.map((p,i)=>[`${p[0]},${p[1]}`, i]));
+    const parts = Array.from({length:4}, ()=>Array(4).fill(null));
+
+    function dirBetween(a,b){
+      const dx = b[0]-a[0], dy = b[1]-a[1];
+      if (dx === 1 && dy === 0) return "r";
+      if (dx === -1 && dy === 0) return "l";
+      if (dx === 0 && dy === 1) return "d";
+      if (dx === 0 && dy === -1) return "u";
+      return null;
+    }
+
+    // links along the spine
+    const spineLinks = new Map();
+    for (let i=0;i<ordered.length;i++){
+      const key = `${ordered[i][0]},${ordered[i][1]}`;
+      spineLinks.set(key, {l:false,r:false,u:false,d:false});
+      if (i > 0){
+        const d = dirBetween(ordered[i], ordered[i-1]);
+        if (d) spineLinks.get(key)[d] = true;
+      }
+      if (i < ordered.length-1){
+        const d = dirBetween(ordered[i], ordered[i+1]);
+        if (d) spineLinks.get(key)[d] = true;
+      }
+    }
+
+    for (let y=0;y<4;y++){
+      for (let x=0;x<4;x++){
+        if (!mat4[y][x]) continue;
+        const key = `${x},${y}`;
+        const i = idx.has(key) ? idx.get(key) : 1;
+        let part = "body";
+        if (i === 0) part = "head";
+        else if (i === ordered.length-1) part = "tail";
+        parts[y][x] = { part, links: spineLinks.get(key) || {l:false,r:false,u:false,d:false} };
+      }
+    }
+
+    return { mat4, parts };
+  }
+
+  function merge(piece){
+    // Store per-cell part info so the placed piece keeps its ferret shape after locking.
+    const { mat4, parts } = computeFerretParts(piece);
+
+    // We must map 4x4 local coords into current piece.matrix coords.
+    // We'll draw/merge using piece.matrix coords, but for parts use 4x4 where possible.
+    for (let y = 0; y < piece.matrix.length; y++){
+      for (let x = 0; x < piece.matrix[y].length; x++){
+        if (!piece.matrix[y][x]) continue;
+        const bx = piece.x + x;
+        const by = piece.y + y;
+        if (by < 0) continue;
+
+        // Map (x,y) from piece.matrix to 4x4 coords: it's same top-left aligned in normalizeTo4()
+        const info = parts[y]?.[x] || { part:"body", links:{l:false,r:false,u:false,d:false} };
+
+        if (by >= 0 && by < ROWS && bx >= 0 && bx < COLS){
+          board[by][bx] = { type: piece.type, part: info.part, links: info.links };
+        }
+      }
+    }
+  }
+
+  function updateHUD(){
+    scoreEl.textContent = String(score);
+    linesEl.textContent = String(lines);
+    levelEl.textContent = String(level);
+    currentCoatEl.textContent = current ? FERRET[current.type].name : "—";
+    holdCoatEl.textContent = hold ? FERRET[hold].name : "—";
+    if (score > best){
+      best = score;
+      localStorage.setItem("ferret_tetris_best", String(best));
+      bestEl.textContent = String(best);
+    }
+  }
+
+  function clearLines(){
+    let cleared = 0;
+    for (let y = ROWS - 1; y >= 0; ){
+      if (board[y].every(cell => cell !== null)){
+        board.splice(y,1);
+        board.unshift(Array(COLS).fill(null));
+        cleared++;
+      } else y--;
+    }
+    if (cleared > 0){
+      const lineScores = [0, 100, 300, 500, 800];
+      score += (lineScores[cleared] || 0) * level;
+      lines += cleared;
+      level = Math.max(1, Math.floor(lines / 10) + 1);
+      squeak("line");
+      updateHUD();
+    }
+  }
+
+  function gameOver(){
+    running = false;
+    paused = false;
+    setPill("GAME OVER");
+    squeak("gameover");
+    draw();
+  }
+
+  function lockPiece(){
+    merge(current);
+    clearLines();
+    holdUsed = false;
+    current = next;
+    next = spawnPiece(bagNextType());
+    if (collides(current,0,0)) gameOver();
+    updateHUD();
+  }
+
+  function hardDrop(){
+    if (!running || paused) return;
+    let dist = 0;
+    while (!collides(current,0,1)){
+      current.y++; dist++;
+    }
+    score += dist * 2;
+    squeak("drop");
+    lockPiece();
+  }
+
+  function holdPiece(){
+    if (!running || paused || holdUsed) return;
+    holdUsed = true;
+
+    const curType = current.type;
+    if (!hold){
+      hold = curType;
+      current = next;
+      next = spawnPiece(bagNextType());
+    } else {
+      current = spawnPiece(hold);
+      hold = curType;
+    }
+    current.x = Math.floor((COLS - current.matrix.length)/2);
+    current.y = -1;
+    squeak("hold");
+    if (collides(current)) gameOver();
+    updateHUD();
+  }
+
+  function startGame(){
+    for (let y=0;y<ROWS;y++) board[y].fill(null);
+    rngBag = [];
+    score = 0; lines = 0; level = 1;
+    hold = null; holdUsed = false;
+    current = spawnPiece(bagNextType());
+    next = spawnPiece(bagNextType());
+    running = true; paused = false;
+    lastTime = 0; dropCounter = 0;
+    setPill("PLAYING");
+    squeak("start");
+    updateHUD();
+    requestAnimationFrame(loop);
+  }
+
+  function togglePause(){
+    if (!running){ startGame(); return; }
+    paused = !paused;
+    setPill(paused ? "PAUSED" : "PLAYING");
+    squeak(paused ? "pause" : "start");
+    if (!paused) requestAnimationFrame(loop);
+    draw();
+  }
+
+  btnToggle.addEventListener("click", togglePause);
+
+  // ---------- Drawing (ferret-shaped segments) ----------
+  function roundRect(g,x,y,w,h,r){
+    g.beginPath();
+    g.moveTo(x+r,y);
+    g.arcTo(x+w,y,x+w,y+h,r);
+    g.arcTo(x+w,y+h,x,y+h,r);
+    g.arcTo(x,y+h,x,y,r);
+    g.arcTo(x,y,x+w,y,r);
+    g.closePath();
+  }
+
+  function drawConnector(g, px, py, s, dir, color, alpha){
+    g.save();
+    g.globalAlpha = alpha;
+    g.fillStyle = color;
+    const t = Math.max(5, s*0.22);
+    if (dir === "l") g.fillRect(px - 1, py + s*0.38, t + 2, s*0.24);
+    if (dir === "r") g.fillRect(px + s - t + 1, py + s*0.38, t + 2, s*0.24);
+    if (dir === "u") g.fillRect(px + s*0.38, py - 1, s*0.24, t + 2);
+    if (dir === "d") g.fillRect(px + s*0.38, py + s - t + 1, s*0.24, t + 2);
+    g.restore();
+  }
+
+  function drawFerretSegment(g, px, py, s, type, part, links, alpha=1){
+    const p = FERRET[type];
+
+    // main "fur blob" fills most of the cell, with connectors to adjacent spine cells
+    g.save();
+    g.globalAlpha = alpha;
+
+    // fur blob
+    g.fillStyle = p.body;
+    roundRect(g, px + 2, py + 2, s - 4, s - 4, Math.max(8, s*0.25));
+    g.fill();
+
+    // belly patch
+    g.globalAlpha = alpha * 0.75;
+    g.fillStyle = p.belly;
+    roundRect(g, px + s*0.28, py + s*0.45, s*0.44, s*0.40, Math.max(8, s*0.22));
+    g.fill();
+
+    // connectors (to make it look like ONE ferret)
+    g.globalAlpha = alpha;
+    if (links?.l) drawConnector(g, px, py, s, "l", p.body, alpha);
+    if (links?.r) drawConnector(g, px, py, s, "r", p.body, alpha);
+    if (links?.u) drawConnector(g, px, py, s, "u", p.body, alpha);
+    if (links?.d) drawConnector(g, px, py, s, "d", p.body, alpha);
+
+    // tail taper
+    if (part === "tail"){
+      g.globalAlpha = alpha * 0.9;
+      g.fillStyle = "rgba(0,0,0,0.10)";
+      g.beginPath();
+      g.ellipse(px + s*0.50, py + s*0.78, s*0.20, s*0.10, 0, 0, Math.PI*2);
+      g.fill();
+
+      // little tail curl direction based on link back to body
+      const backDir = links?.l ? "l" : links?.r ? "r" : links?.u ? "u" : "d";
+      g.strokeStyle = "rgba(0,0,0,0.20)";
+      g.lineWidth = Math.max(2, s*0.08);
+      g.lineCap = "round";
+      g.beginPath();
+      if (backDir === "l") g.arc(px + s*0.75, py + s*0.70, s*0.22, Math.PI*0.9, Math.PI*1.6);
+      else if (backDir === "r") g.arc(px + s*0.25, py + s*0.70, s*0.22, Math.PI*1.4, Math.PI*2.1);
+      else if (backDir === "u") g.arc(px + s*0.50, py + s*0.25, s*0.22, Math.PI*0.1, Math.PI*0.8);
+      else g.arc(px + s*0.50, py + s*0.80, s*0.22, Math.PI*1.1, Math.PI*1.9);
+      g.stroke();
+    }
+
+    // head face
+    if (part === "head"){
+      if (p.mask){
+        g.globalAlpha = alpha * 0.40;
+        g.fillStyle = "rgba(0,0,0,0.22)";
+        g.beginPath();
+        g.ellipse(px + s*0.50, py + s*0.35, s*0.34, s*0.22, 0, 0, Math.PI*2);
+        g.fill();
+      }
+
+      // ears
+      g.globalAlpha = alpha * 0.35;
+      g.fillStyle = "#ffffff";
+      g.beginPath();
+      g.ellipse(px + s*0.32, py + s*0.18, s*0.10, s*0.12, 0, 0, Math.PI*2);
+      g.ellipse(px + s*0.68, py + s*0.18, s*0.10, s*0.12, 0, 0, Math.PI*2);
+      g.fill();
+
+      // eyes
+      g.globalAlpha = alpha;
+      g.fillStyle = "rgba(20,20,30,0.90)";
+      g.beginPath();
+      g.arc(px + s*0.40, py + s*0.34, s*0.06, 0, Math.PI*2);
+      g.arc(px + s*0.60, py + s*0.34, s*0.06, 0, Math.PI*2);
+      g.fill();
+
+      // nose
+      g.fillStyle = "rgba(30,30,40,0.90)";
+      g.beginPath();
+      g.arc(px + s*0.50, py + s*0.48, s*0.05, 0, Math.PI*2);
+      g.fill();
+
+      // whiskers
+      g.strokeStyle = "rgba(0,0,0,0.28)";
+      g.lineWidth = Math.max(1, s*0.04);
+      g.beginPath();
+      g.moveTo(px + s*0.44, py + s*0.50); g.lineTo(px + s*0.10, py + s*0.44);
+      g.moveTo(px + s*0.44, py + s*0.56); g.lineTo(px + s*0.10, py + s*0.60);
+      g.moveTo(px + s*0.56, py + s*0.50); g.lineTo(px + s*0.90, py + s*0.44);
+      g.moveTo(px + s*0.56, py + s*0.56); g.lineTo(px + s*0.90, py + s*0.60);
+      g.stroke();
+    }
+
+    // outline for readability
+    g.globalAlpha = alpha * 0.55;
+    g.strokeStyle = "rgba(255,255,255,0.12)";
+    g.lineWidth = 1;
+    roundRect(g, px + 2, py + 2, s - 4, s - 4, Math.max(8, s*0.25));
+    g.stroke();
+
+    g.restore();
+  }
+
+  function drawBoard(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // faint grid
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1;
+    for (let x=0;x<=COLS;x++){
+      ctx.beginPath();
+      ctx.moveTo(x*BLOCK, TOP_OFFSET);
+      ctx.lineTo(x*BLOCK, TOP_OFFSET + ROWS*BLOCK);
+      ctx.stroke();
+    }
+    for (let y=0;y<=ROWS;y++){
+      ctx.beginPath();
+      ctx.moveTo(0, TOP_OFFSET + y*BLOCK);
+      ctx.lineTo(COLS*BLOCK, TOP_OFFSET + y*BLOCK);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.save();
+    ctx.translate(0, TOP_OFFSET);
+    for (let y=0;y<ROWS;y++){
+      for (let x=0;x<COLS;x++){
+        const cell = board[y][x];
+        if (!cell) continue;
+        drawFerretSegment(ctx, x*BLOCK, y*BLOCK, BLOCK, cell.type, cell.part, cell.links, 1);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawGhost(piece){
+    let gy = piece.y;
+    while (!collides(piece, 0, (gy - piece.y) + 1)) gy++;
+    const ghost = { ...piece, y: gy };
+
+    const { parts } = computeFerretParts(ghost);
+    ctx.save();
+    ctx.translate(0, TOP_OFFSET);
+    for (let y=0;y<ghost.matrix.length;y++){
+      for (let x=0;x<ghost.matrix[y].length;x++){
+        if (!ghost.matrix[y][x]) continue;
+        const by = ghost.y + y;
+        const bx = ghost.x + x;
+        if (by < 0) continue;
+        const info = parts[y]?.[x] || {part:"body", links:{l:false,r:false,u:false,d:false}};
+        drawFerretSegment(ctx, bx*BLOCK, by*BLOCK, BLOCK, ghost.type, info.part, info.links, 0.18);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawActivePiece(piece){
+    const { parts } = computeFerretParts(piece);
+    ctx.save();
+    ctx.translate(0, TOP_OFFSET);
+    for (let y=0;y<piece.matrix.length;y++){
+      for (let x=0;x<piece.matrix[y].length;x++){
+        if (!piece.matrix[y][x]) continue;
+        const by = piece.y + y;
+        const bx = piece.x + x;
+        if (by < 0) continue;
+        const info = parts[y]?.[x] || {part:"body", links:{l:false,r:false,u:false,d:false}};
+        drawFerretSegment(ctx, bx*BLOCK, by*BLOCK, BLOCK, piece.type, info.part, info.links, 1);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawMiniPiece(piece, boxX, boxY, boxW, boxH){
+    const s = 22;
+    const mat = piece.matrix;
+    const size = mat.length;
+    const startX = boxX + Math.floor((boxW - size*s)/2);
+    const startY = boxY + Math.floor((boxH - size*s)/2);
+
+    const { parts } = computeFerretParts(piece);
+    for (let y=0;y<size;y++){
+      for (let x=0;x<size;x++){
+        if (!mat[y][x]) continue;
+        const px = startX + x*s;
+        const py = startY + y*s;
+        const info = parts[y]?.[x] || {part:"body", links:{l:false,r:false,u:false,d:false}};
+        // mini segment
+        const p = FERRET[piece.type];
+        nctx.save();
+        nctx.globalAlpha = 0.98;
+        nctx.fillStyle = p.body;
+        roundRect(nctx, px + 1, py + 1, s - 2, s - 2, 7);
+        nctx.fill();
+        if (info.links?.l) { nctx.fillRect(px - 1, py + s*0.38, s*0.22 + 2, s*0.24); }
+        if (info.links?.r) { nctx.fillRect(px + s - s*0.22 + 1, py + s*0.38, s*0.22 + 2, s*0.24); }
+        if (info.links?.u) { nctx.fillRect(px + s*0.38, py - 1, s*0.24, s*0.22 + 2); }
+        if (info.links?.d) { nctx.fillRect(px + s*0.38, py + s - s*0.22 + 1, s*0.24, s*0.22 + 2); }
+        nctx.globalAlpha = 1;
+        if (info.part === "head"){
+          nctx.fillStyle = "rgba(20,20,30,0.90)";
+          nctx.beginPath();
+          nctx.arc(px + s*0.40, py + s*0.36, s*0.06, 0, Math.PI*2);
+          nctx.arc(px + s*0.60, py + s*0.36, s*0.06, 0, Math.PI*2);
+          nctx.fill();
+          nctx.fillStyle = "rgba(30,30,40,0.90)";
+          nctx.beginPath();
+          nctx.arc(px + s*0.50, py + s*0.50, s*0.05, 0, Math.PI*2);
+          nctx.fill();
+        }
+        nctx.restore();
+      }
+    }
+  }
+
+  function drawNextAndHold(){
+    nctx.clearRect(0,0,nextCanvas.width,nextCanvas.height);
+
+    nctx.fillStyle = "#eaeaf3";
+    nctx.globalAlpha = 0.9;
+    nctx.font = "700 13px system-ui,-apple-system,Segoe UI,Roboto,Arial";
+    nctx.fillText("Next", 14, 18);
+    nctx.fillText("Hold", nextCanvas.width/2 + 10, 18);
+    nctx.globalAlpha = 1;
+
+    const pad = 10;
+    const boxW = Math.floor((nextCanvas.width - pad*3)/2);
+    const boxH = 140;
+    const nextX = pad, nextY = 26;
+    const holdX = pad*2 + boxW, holdY = 26;
+
+    nctx.strokeStyle = "rgba(255,255,255,0.14)";
+    nctx.lineWidth = 1;
+    nctx.fillStyle = "rgba(0,0,0,0.25)";
+    nctx.beginPath(); nctx.roundRect(nextX, nextY, boxW, boxH, 14); nctx.fill(); nctx.stroke();
+    nctx.beginPath(); nctx.roundRect(holdX, holdY, boxW, boxH, 14); nctx.fill(); nctx.stroke();
+
+    if (next) drawMiniPiece(next, nextX, nextY, boxW, boxH);
+    if (hold){
+      const h = spawnPiece(hold);
+      drawMiniPiece(h, holdX, holdY, boxW, boxH);
+    }
+
+    nctx.fillStyle = "#eaeaf3";
+    nctx.globalAlpha = 0.75;
+    nctx.font = "12px system-ui,-apple-system,Segoe UI,Roboto,Arial";
+    const nextLabel = next ? FERRET[next.type].name : "—";
+    const holdLabel = hold ? FERRET[hold].name : "—";
+    nctx.fillText(nextLabel, nextX + 12, nextY + boxH + 26);
+    nctx.fillText(holdLabel, holdX + 12, holdY + boxH + 26);
+    nctx.globalAlpha = 1;
+  }
+
+  function draw(){
+    drawBoard();
+    if (running){
+      drawGhost(current);
+      drawActivePiece(current);
+    }
+    drawNextAndHold();
+
+    if (!running){
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "800 22px system-ui,-apple-system,Segoe UI,Roboto,Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("Ferret Tetris", canvas.width/2, canvas.height/2 - 20);
+      ctx.font = "14px system-ui,-apple-system,Segoe UI,Roboto,Arial";
+      ctx.globalAlpha = 0.9;
+      ctx.fillText("Press Start / Pause (or P) to play", canvas.width/2, canvas.height/2 + 10);
+      ctx.restore();
+    }
+  }
+
+  // --- Controls ---
+  window.addEventListener("keydown", (e) => {
+    const key = e.key.toLowerCase();
+
+    if (key === "p"){ togglePause(); return; }
+    if (!running || paused) return;
+
+    if (e.key === "ArrowLeft"){
+      if (!collides(current,-1,0)){ current.x--; squeak("move"); }
+    } else if (e.key === "ArrowRight"){
+      if (!collides(current,1,0)){ current.x++; squeak("move"); }
+    } else if (e.key === "ArrowDown"){
+      if (!collides(current,0,1)){
+        current.y++;
+        score += 1;
+        updateHUD();
+      } else lockPiece();
+    } else if (e.code === "Space"){
+      e.preventDefault();
+      hardDrop();
+    } else if (e.key === "ArrowUp"){
+      const dir = 1;
+      const rotated = rotateMatrix(current.matrix, dir);
+      const kicks = [0, -1, 1, -2, 2];
+      for (const k of kicks){
+        if (!collides(current, k, 0, rotated)){
+          current.matrix = rotated;
+          current.rot = (current.rot + (dir === 1 ? 1 : 3)) & 3;
+          current.x += k;
+          squeak("rotate");
+          break;
+        }
+      }
+    } else if (key === "c"){
+      holdPiece();
+    }
+
+    draw();
+  });
+
+  // --- Loop ---
+  function loop(time=0){
+    if (!running || paused) return;
+
+    const delta = time - lastTime;
+    lastTime = time;
+    dropCounter += delta;
+
+    if (dropCounter > getDropInterval()){
+      dropCounter = 0;
+      if (!collides(current,0,1)) current.y++;
+      else lockPiece();
+    }
+
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // initial
+  updateHUD();
+  draw();
+})();
+</script>
+</body>
+</html>
